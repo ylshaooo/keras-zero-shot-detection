@@ -13,12 +13,12 @@ from keras.layers import Input
 from yolo3.model import yolo_body, yolo_eval
 from yolo3.utils import letterbox_image, normalize
 
+
+# list classes for convenience
 seen_classes = ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'cat', 'chair', 'cow', 'diningtable',
                 'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'tvmonitor']
 
 unseen_classes = ['car', 'dog', 'sofa', 'train']
-
-total_classes = seen_classes + unseen_classes
 
 
 class YOLO(object):
@@ -34,7 +34,6 @@ class YOLO(object):
         self.sess = K.get_session()
         self.model_image_size = (416, 416)  # fixed size or (None, None), hw
         self.boxes, self.scores, self.classes = self.generate()
-        self.total = 0
 
     def _get_anchors(self):
         anchors_path = os.path.expanduser(self.anchors_path)
@@ -93,7 +92,6 @@ class YOLO(object):
                 class_name = unseen_classes[c]
                 confidence = out_scores[i]
                 box = out_boxes[i]
-                self.total += 1
 
                 top, left, bottom, right = box
                 top = max(0, np.floor(top + 0.5).astype('int32'))
@@ -117,7 +115,6 @@ def _main():
     for img_path in tqdm(test_img):
         img_path = img_path.split()[0]
         yolo.detect_image(img_path)
-    print('total boxes: %d' % yolo.total)
     K.clear_session()
 
 

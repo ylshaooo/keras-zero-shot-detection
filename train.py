@@ -2,8 +2,6 @@
 Train the YOLO model for your own dataset.
 """
 
-import os
-
 import keras
 import keras.backend as K
 import numpy as np

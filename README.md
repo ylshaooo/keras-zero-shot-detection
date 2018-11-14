@@ -38,7 +38,10 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
 
     We split **16 / 4** of total 20 VOC classes as seen/unseen classes. We guarantee that
     there must be at least one category in seen classes that are semantically similar to
-    any unseen classes. Unseen classes are as follows.
+    any unseen classes. Proved by experiments, we choose glove embedding to best represent
+    each class semantics.  
+    
+    Unseen classes are as follows.
 
 - ### MAP of Unseen Classes
     
@@ -83,7 +86,7 @@ or run the visualization demo. `python test.py  OR  python demo.py`.
 ## Issues to know
 
 1. The train and test environment is
-    - Python 3.5.5
+    - Python 3.5.4
     - Keras 2.2.0
     - tensorflow 1.6.0
 
@@ -99,3 +102,6 @@ try Darknet training. It's OK if there is a mismatch warning.
 
 6. The training strategy is for reference only. Adjust it according to your dataset and
 your goal. And add further strategy if needed.
+
+7. For data and results analysis, you are recommended to run our scripts in the anaylsis 
+directory as we provided.

@@ -70,6 +70,8 @@ def make_last_layers(x, num_filters, out_filters):
 def yolo_body(inputs, num_anchors):
     """Create YOLO_V3 model CNN body in Keras."""
     darknet = Model(inputs, darknet_body(inputs))
+
+    # output dimension: 300-embedding, 20-class-objectness-probs, 4-coordinates-xywh
     x, y1 = make_last_layers(darknet.output, 512, num_anchors * 24 + 300)
 
     x = compose(DarknetConv2D_BN_Leaky(256, (1, 1)),
@@ -96,10 +98,8 @@ def yolo_head(feats, anchors, input_shape, calc_loss=False):
     anchors_tensor = K.reshape(K.constant(anchors), [1, 1, 1, num_anchors, 2])
 
     grid_shape = K.shape(feats)[1:3]  # height, width
-    grid_y = K.tile(K.reshape(K.arange(0, stop=grid_shape[0]), [-1, 1, 1, 1]),
-                    [1, grid_shape[1], 1, 1])
-    grid_x = K.tile(K.reshape(K.arange(0, stop=grid_shape[1]), [1, -1, 1, 1]),
-                    [grid_shape[0], 1, 1, 1])
+    grid_y = K.tile(K.reshape(K.arange(0, stop=grid_shape[0]), [-1, 1, 1, 1]), [1, grid_shape[1], 1, 1])
+    grid_x = K.tile(K.reshape(K.arange(0, stop=grid_shape[1]), [1, -1, 1, 1]), [grid_shape[0], 1, 1, 1])
     grid = K.concatenate([grid_x, grid_y])
     grid = K.cast(grid, K.dtype(feats))
 
@@ -459,11 +459,14 @@ def yolo_loss(args, anchors, num_seen, ignore_thresh=.5):
         raw_pred_box_embedding = pred_box_embedding
         true_relation = 0.5 * (class_relation(true_class_probs, embeddings) + 1)
 
+        # binary cross entropy performs better than categorical cross entropy
         xy_loss = object_mask * box_loss_scale * K.binary_crossentropy(raw_true_xy, raw_pred_xy, True)
         wh_loss = object_mask * box_loss_scale * 0.5 * K.square(raw_true_wh - raw_pred_wh)
+        # both positive and negative samples contribute to object loss
         object_loss = object_mask * K.binary_crossentropy(object_mask * true_relation, raw_pred_objectness, True) + \
                       (1 - object_mask) *  \
                       K.binary_crossentropy(object_mask * true_relation, raw_pred_objectness, True) * ignore_mask
+        # embarrassingly simple ZSL loss
         embedding_loss = object_mask * category_loss(embeddings[..., :num_seen, :], raw_pred_box_embedding,
                                                      true_class_probs[..., :num_seen])
 

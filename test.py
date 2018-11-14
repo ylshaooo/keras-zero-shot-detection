@@ -94,6 +94,7 @@ class YOLO(object):
                 box = out_boxes[i]
 
                 top, left, bottom, right = box
+                # round the coordinates
                 top = max(0, np.floor(top + 0.5).astype('int32'))
                 left = max(0, np.floor(left + 0.5).astype('int32'))
                 bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))

@@ -3,27 +3,27 @@ Generate ground truth file for each test image of VOC2012 dataset.
 """
 
 import xml.etree.ElementTree as ET
-import os
 
-seen_classes = ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'cat', 'chair', 'cow', 'diningtable',
-                'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'tvmonitor']
+# change your own spilt in voc_classes.txt
+num_seen = 16
+with open('data/voc_classes.txt') as f:
+    classes = f.readlines()
 
-unseen_classes = ['car', 'dog', 'sofa', 'train']
-
-total_classes = seen_classes + unseen_classes
+total_classes = [c.strip() for c in classes]
+seen_classes = total_classes[:num_seen]
+unseen_classes = total_classes[num_seen:]
 
 
 def convert_annotation(image_id):
+    """Convert annotations from xml files to txt files as mAP program required."""
+
     in_file = open('data/voc/VOCdevkit/VOC2012/Annotations/%s.xml' % image_id)
     tree = ET.parse(in_file)
     root = tree.getroot()
 
     with open('data/voc/ground-truth/test/%s.txt' % image_id, 'w') as f:
         for obj in root.iter('object'):
-            difficult = obj.find('difficult').text
             cls = obj.find('name').text
-            if int(difficult) == 1:
-                continue
             xmlbox = obj.find('bndbox')
             b = (int(xmlbox.find('xmin').text), int(xmlbox.find('ymin').text),
                  int(xmlbox.find('xmax').text), int(xmlbox.find('ymax').text))
@@ -31,7 +31,7 @@ def convert_annotation(image_id):
 
 
 if __name__ == '__main__':
-    with open('data/voc/test.txt') as f:
+    with open('data/test.txt') as f:
         lines = f.readlines()
     for line in lines:
         img_id = line.split('/')[-1].split('.')[0]

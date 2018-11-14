@@ -99,8 +99,9 @@ file model_data/yolo_weights.h5 is used to load pretrained weights.
 checkpoint weights in yolo.py. Remember to modify class path or anchor path.
 
 4. Test ZSD model and evaluate the results using [mAP](https://github.com/Cartucho/mAP), 
-or run the visualization demo. `python test.py  OR  python demo.py`.  
-    Test file are in the form: `path/to/img`, one row for one image.  
+or run the visualization demo.  
+`python test.py  OR  python demo.py`.  
+Test file is in the form: `path/to/img`, one row for one image.  
 
 ---
 

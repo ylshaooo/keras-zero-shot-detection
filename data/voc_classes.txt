@@ -1,0 +1,20 @@
+aeroplane
+bicycle
+bird
+boat
+bottle
+bus
+cat
+chair
+cow
+dining table
+horse
+motorbike
+person
+potted plant
+sheep
+tv monitor
+car
+dog
+sofa
+train

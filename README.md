@@ -27,7 +27,8 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
     describes the class characteristics. We apply the mainstream ZSL approach on the
     famous [YOLO](https://arxiv.org/abs/1506.02640) detection model to achieve this goal.
     
-    
+    ![](results/00001_res.jpg)  
+    ![](results/00002_res.jpg)
 
 ---
 

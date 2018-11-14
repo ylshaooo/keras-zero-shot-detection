@@ -34,18 +34,24 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
 
 ## Results on PASCAL VOC
 
-- ### Dataset Split
+- ### Settings
 
-    We split **16 / 4** of total 20 VOC classes as seen/unseen classes. We guarantee that
+    1. We split **16 / 4** of total 20 VOC classes as seen/unseen classes. We guarantee that
     there must be at least one category in seen classes that are semantically similar to
-    any unseen classes. Proved by experiments, we choose glove embedding to best represent
-    each class semantics.  
+    any unseen classes. Unseen classes are as follows.
     
-    Unseen classes are as follows.
+    2. Proved by experiments, we choose glove embedding to best represent each class 
+    semantics. VOC class glove embedding are extracted in `data/glove_embedding.npy`.  
+    
+    3. We apply basic ZSL method in the YOLO model, referring from the 2015 NIPS paper
+     "[An embarrassingly simple approach to zero-shot learning](https://dl.acm.org/citation.cfm?id=3045347)".
+     
+    4. We provide some self-made modules in the objectness proposal brance, to better
+    detect unseen object and improve the localization and recognition results.
 
 - ### MAP of Unseen Classes
     
-    U2U detection results for VOC dataset:
+    U2U mean average precision (MAP) for VOC dataset:
     
     |   car  |   dog  |  sofa  | train  |   mAP  |
     |:------:|:------:|:------:|:------:|:------:|
@@ -53,7 +59,22 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
 
 - ### Feature Exaction
 
-    For further research,
+    From current detection mAP of ZSD model, it has not achieved the most desirable 
+    result as we expected. It is possible that nnsatisfactory feature extraction of
+    one-stage model contributes to the problem. For further research, we would like to
+    employ the two-stage models, such as [Faster RCNN](https://arxiv.org/abs/1506.01497),
+    which contains a Region Proposal Network (RPN) to generate coarse regions and
+    re-sample from the feature map.
+    
+    For the sake of simplicity, we cluster object feature map extracted by resnet50 in 
+    Faster RCNN and the grid feature used in YOLO, with T-SNE tools.  
+    The visualization is as shown below:
+    ![](results/t-sne.png)  
+    
+    Left is FRCNN features and right is YOLO features. Apparently the feature are more
+    clear for classification in two-stage models. We consider methods in the two-stage
+    models in the future for better performance.
+
 
 ---
 
@@ -77,7 +98,7 @@ file model_data/yolo_weights.h5 is used to load pretrained weights.
 3. Modify train.py and start training `python train.py`. Use your trained weights or
 checkpoint weights in yolo.py. Remember to modify class path or anchor path.
 
-4. Test ZSD model and evaluate the results using [MAP](https://github.com/Cartucho/mAP), 
+4. Test ZSD model and evaluate the results using [mAP](https://github.com/Cartucho/mAP), 
 or run the visualization demo. `python test.py  OR  python demo.py`.  
     Test file are in the form: `path/to/img`, one row for one image.  
 

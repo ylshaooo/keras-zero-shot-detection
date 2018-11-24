@@ -9,24 +9,25 @@ from PIL import Image
 from tqdm import tqdm
 from keras import backend as K
 from keras.layers import Input
+from sklearn.preprocessing import normalize
 
-from yolo3.model import yolo_body, yolo_eval
-from yolo3.utils import letterbox_image, normalize
+from yolo3.model import yolo_body, yolo_plus_body, yolo_eval
+from yolo3.utils import letterbox_image
 
-
-# list classes for convenience
 seen_classes = ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'cat', 'chair', 'cow', 'diningtable',
                 'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'tvmonitor']
 
 unseen_classes = ['car', 'dog', 'sofa', 'train']
 
+total_classes = seen_classes + unseen_classes
+
 
 class YOLO(object):
     def __init__(self):
-        self.weight_path = 'logs/voc/trained_weights.h5'
+        self.weight_path = 'logs/trained_weights_02.h5'
         self.anchors_path = 'model_data/yolo_anchors.txt'
-        self.embedding_path = 'data/glove_embedding.npy'
-        self.predict_dir = 'data/predicted/test'
+        self.embedding_path = 'model_data/glove_embedding.npy'
+        self.predict_dir = 'data/predicted/'
         self.score = 0.1
         self.iou = 0.5
         self.num_seen = 16
@@ -49,7 +50,10 @@ class YOLO(object):
         # Load model, or construct model and load weights.
         num_anchors = len(self.anchors)
 
-        self.yolo_model = yolo_body(Input(shape=(None, None, 3)), num_anchors // 3)
+        image_input = Input(shape=self.model_image_size + (3,))
+        anchor_input = Input(shape=(num_anchors, 2))
+        self.yolo_model = yolo_body(image_input, num_anchors // 3)
+        self.yolo_plus_model = yolo_plus_body([image_input, anchor_input], self.yolo_model.outputs, num_anchors // 3)
         self.yolo_model.load_weights(self.weight_path, by_name=True)
         print('{} model, anchors and classes loaded.'.format(model_path))
 
@@ -77,14 +81,17 @@ class YOLO(object):
 
         image_data /= 255.
         image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
+        anchors = np.expand_dims(self.anchors, 0)
 
         out_boxes, out_scores, out_classes = self.sess.run(
             [self.boxes, self.scores, self.classes],
             feed_dict={
-                self.yolo_model.input: image_data,
+                self.yolo_model.inputs[0]: image_data,
+                self.yolo_model.inputs[1]: anchors,
                 self.input_image_shape: [image.size[1], image.size[0]],
                 K.learning_phase(): 0
-            })
+            }
+        )
 
         image_name = image_path.split('/')[-1].split('.')[0]
         with open(os.path.join(self.predict_dir, image_name + '.txt'), 'w') as f:
@@ -94,7 +101,6 @@ class YOLO(object):
                 box = out_boxes[i]
 
                 top, left, bottom, right = box
-                # round the coordinates
                 top = max(0, np.floor(top + 0.5).astype('int32'))
                 left = max(0, np.floor(left + 0.5).astype('int32'))
                 bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))

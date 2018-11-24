@@ -74,6 +74,15 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
     Left is FRCNN features and right is YOLO features. Apparently the feature are more
     clear for classification in two-stage models. We consider methods in the two-stage
     models in the future for better performance.
+    
+- ### Feature Resampling
+    
+    We finetune the zero-shot yolo model to obtain better embedding prediction by adding
+    a feature resampling module, ROIAlign, proposed by [Mask R-CNN](https://arxiv.org/abs/1703.06870).
+    We call it Zero-Shot YOLO+. Actually, the model is no longer a standard one-stage
+    detector. It got reasonable results but not very robust. We increase the MAP on VOC
+    dataset by 2 percentage, i.e. 55.63%. The improvement work of model architecture and
+    parameters will be continued.
 
 
 ---

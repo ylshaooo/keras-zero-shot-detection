@@ -3,9 +3,9 @@
 from functools import wraps
 
 import keras.backend as K
+import keras.layers as KL
 import numpy as np
 import tensorflow as tf
-from keras.layers import Conv2D, Add, ZeroPadding2D, UpSampling2D, Concatenate
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.normalization import BatchNormalization
 from keras.models import Model
@@ -14,13 +14,52 @@ from keras.regularizers import l2
 from yolo3.utils import compose
 
 
-@wraps(Conv2D)
+class ROIAlign(KL.Layer):
+    def __init__(self, input_shape, pool_shape=(7, 7), **kwargs):
+        super(ROIAlign, self).__init__(**kwargs)
+        self.image_shape = input_shape
+        self.pool_shape = tuple(pool_shape)
+
+    def call(self, inputs):
+        # boxes of shape (b, num_grids, num_anchors, 4)
+        # feature map of shape (b, h, w, c)
+        # anchors of shape (1, 1, num_anchors, 2)
+        boxes = inputs[0]
+        feature_map = inputs[1]
+        anchors = inputs[2]
+
+        box_shape = K.shape(boxes)
+        feature_shape = K.shape(feature_map)
+        grid_shape = feature_shape[1:3]
+        grid = yolo_grid(grid_shape, K.dtype(feature_map))
+        grid = K.reshape(grid, (-1, 1, 2))
+
+        box_xy = (K.sigmoid(boxes[..., :2]) + grid) / K.cast(grid_shape[::-1], K.dtype(feature_map))
+        box_wh = K.exp(boxes[..., 2:4]) * anchors / K.cast(self.image_shape[::-1], K.dtype(feature_map))
+        box_yx = box_xy[..., ::-1]
+        box_hw = box_wh[..., ::-1]
+        box_mins = box_yx - box_hw / 2.     # y1, x1
+        box_maxes = box_yx + box_hw / 2.    # y2, x2
+
+        boxes = K.concatenate([box_mins, box_maxes])
+        boxes = K.reshape(boxes, (-1, 4))
+        box_indices = K.expand_dims(K.arange(0, box_shape[0]), axis=1)
+        box_indices = K.reshape(K.tile(box_indices, [1, box_shape[1] * box_shape[2]]), (-1,))
+        pooled = tf.image.crop_and_resize(feature_map, boxes, box_indices, self.pool_shape)
+        pooled = tf.reshape(pooled, (-1,) + self.pool_shape + (feature_shape[-1],))
+        return pooled
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0][0],) + self.pool_shape + (input_shape[1][-1],)
+
+
+@wraps(KL.Conv2D)
 def DarknetConv2D(*args, **kwargs):
     """Wrapper to set Darknet parameters for Convolution2D."""
     darknet_conv_kwargs = {'kernel_regularizer': l2(5e-4),
                            'padding': 'valid' if kwargs.get('strides') == (2, 2) else 'same'}
     darknet_conv_kwargs.update(kwargs)
-    return Conv2D(*args, **darknet_conv_kwargs)
+    return KL.Conv2D(*args, **darknet_conv_kwargs)
 
 
 def DarknetConv2D_BN_Leaky(*args, **kwargs):
@@ -35,12 +74,12 @@ def DarknetConv2D_BN_Leaky(*args, **kwargs):
 def resblock_body(x, num_filters, num_blocks):
     """A series of resblocks starting with a downsampling Convolution2D"""
     # Darknet uses left and top padding instead of 'same' mode
-    x = ZeroPadding2D(((1, 0), (1, 0)))(x)
+    x = KL.ZeroPadding2D(((1, 0), (1, 0)))(x)
     x = DarknetConv2D_BN_Leaky(num_filters, (3, 3), strides=(2, 2))(x)
     for i in range(num_blocks):
         y = compose(DarknetConv2D_BN_Leaky(num_filters // 2, (1, 1)),
                     DarknetConv2D_BN_Leaky(num_filters, (3, 3)))(x)
-        x = Add()([x, y])
+        x = KL.Add()([x, y])
     return x
 
 
@@ -67,27 +106,67 @@ def make_last_layers(x, num_filters, out_filters):
     return x, y
 
 
+def make_plus_layers(x, y, anchors, input_shape, num_filters, num_anchors, out_filters):
+    """Resample roi on feature and predict new embedding."""
+    s = K.int_shape(y)
+
+    y = KL.Lambda(lambda x: x[..., :num_anchors * num_filters])(y)
+    roi_box = compose(KL.Reshape((s[1] * s[2], num_anchors, out_filters)),
+                      KL.Lambda(lambda x: x[..., :4]))(y)
+
+    e = compose(ROIAlign(input_shape),
+                DarknetConv2D_BN_Leaky(num_filters * 2, (7, 7), padding='valid'),
+                DarknetConv2D_BN_Leaky(num_filters, (1, 1)),
+                KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 2), 1)),
+                KL.Dense(300),
+                KL.Lambda(lambda x: K.reshape(x, (-1, s[1], s[2], num_anchors * 300))))([roi_box, x, anchors])
+
+    y = KL.Concatenate()([y, e])
+    return y
+
+
 def yolo_body(inputs, num_anchors):
     """Create YOLO_V3 model CNN body in Keras."""
     darknet = Model(inputs, darknet_body(inputs))
-
-    # output dimension: 300-embedding, 20-class-objectness-probs, 4-coordinates-xywh
-    x, y1 = make_last_layers(darknet.output, 512, num_anchors * 24 + 300)
+    x1, y1 = make_last_layers(darknet.output, 512, num_anchors * 24 + 300)
 
     x = compose(DarknetConv2D_BN_Leaky(256, (1, 1)),
-                UpSampling2D(2))(x)
-    x = Concatenate()([x, darknet.layers[152].output])
-    x, y2 = make_last_layers(x, 256, num_anchors * 24 + 300)
+                KL.UpSampling2D(2))(x1)
+    x = KL.Concatenate()([x, darknet.layers[152].output])
+    x2, y2 = make_last_layers(x, 256, num_anchors * 24 + 300)
 
     x = compose(DarknetConv2D_BN_Leaky(128, (1, 1)),
-                UpSampling2D(2))(x)
-    x = Concatenate()([x, darknet.layers[92].output])
-    x, y3 = make_last_layers(x, 128, num_anchors * 24 + 300)
+                KL.UpSampling2D(2))(x2)
+    x = KL.Concatenate()([x, darknet.layers[92].output])
+    x3, y3 = make_last_layers(x, 128, num_anchors * 24 + 300)
+
+    return Model(inputs, [x1, x2, x3, y1, y2, y3])
+
+
+def yolo_plus_body(inputs, feature, num_anchors):
+    """Create YOLO plus body by feature resampling.
+
+    inputs: [image_input, anchor_input]
+    feature: [x1, x2, x3, y1, y2, y3]
+    """
+
+    image_shape = K.int_shape(inputs[0])[1:3]
+    # reshape anchors for resampling
+    anchors = KL.Reshape((1, num_anchors * 3, 2))(inputs[1])
+
+    a1 = KL.Lambda(lambda x: x[..., 6:9, :])(anchors)
+    y1 = make_plus_layers(feature[0], feature[3], a1, image_shape, num_anchors, 512, 24)
+
+    a2 = KL.Lambda(lambda x: x[..., 3:6, :])(anchors)
+    y2 = make_plus_layers(feature[1], feature[4], a2, image_shape, num_anchors, 256, 24)
+
+    a3 = KL.Lambda(lambda x: x[..., 0:3, :])(anchors)
+    y3 = make_plus_layers(feature[2], feature[5], a3, image_shape, num_anchors, 128, 24)
 
     return Model(inputs, [y1, y2, y3])
 
 
-def yolo_head(feats, anchors, input_shape, calc_loss=False):
+def yolo_head(feats, anchors, input_shape, calc_loss=False, plus=False):
     """Convert final layer features to bounding box parameters.
 
     xy - relative to grid shape
@@ -96,24 +175,32 @@ def yolo_head(feats, anchors, input_shape, calc_loss=False):
     num_anchors = len(anchors)
     # Reshape to batch, height, width, num_anchors, box_params.
     anchors_tensor = K.reshape(K.constant(anchors), [1, 1, 1, num_anchors, 2])
+    grid_shape = K.shape(feats)[1:3]
+    grid = yolo_grid(grid_shape, K.dtype(feats))
 
-    grid_shape = K.shape(feats)[1:3]  # height, width
-    grid_y = K.tile(K.reshape(K.arange(0, stop=grid_shape[0]), [-1, 1, 1, 1]), [1, grid_shape[1], 1, 1])
-    grid_x = K.tile(K.reshape(K.arange(0, stop=grid_shape[1]), [1, -1, 1, 1]), [grid_shape[0], 1, 1, 1])
-    grid = K.concatenate([grid_x, grid_y])
-    grid = K.cast(grid, K.dtype(feats))
-
-    box_embedding = K.reshape(feats[..., :300], [-1, grid_shape[0], grid_shape[1], 1, 300])
-    feats = K.reshape(feats[..., 300:], [-1, grid_shape[0], grid_shape[1], num_anchors, 24])
+    if plus:
+        box_embedding = K.reshape(feats[..., num_anchors * 24:], [-1, grid_shape[0], grid_shape[1], num_anchors, 300])
+    else:
+        box_embedding = K.reshape(feats[..., num_anchors * 24:], [-1, grid_shape[0], grid_shape[1], 1, 300])
+    feats = K.reshape(feats[..., :num_anchors * 24], [-1, grid_shape[0], grid_shape[1], num_anchors, 24])
 
     # Adjust predictions to each spatial grid point and anchor size.
     box_xy = (K.sigmoid(feats[..., :2]) + grid) / K.cast(grid_shape[::-1], K.dtype(feats))
     box_wh = K.exp(feats[..., 2:4]) * anchors_tensor / K.cast(input_shape[::-1], K.dtype(feats))
     obj_prob = K.sigmoid(feats[..., 4:])
+    box_embedding = K.tanh(box_embedding)
 
     if calc_loss:
         return grid, feats, box_xy, box_wh, box_embedding
     return box_xy, box_wh, box_embedding, obj_prob
+
+
+def yolo_grid(grid_shape, dtype):
+    grid_y = K.tile(K.reshape(K.arange(0, stop=grid_shape[0]), [-1, 1, 1, 1]), n=[1, grid_shape[1], 1, 1])
+    grid_x = K.tile(K.reshape(K.arange(0, stop=grid_shape[1]), [1, -1, 1, 1]), n=[grid_shape[0], 1, 1, 1])
+    grid = K.concatenate([grid_x, grid_y])
+    grid = K.cast(grid, dtype=dtype)
+    return grid
 
 
 def yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape):
@@ -145,13 +232,11 @@ def yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape):
 def yolo_boxes_and_scores(feats, anchors, embeddings, num_classes, num_seen,
                           input_shape, image_shape):
     """Process Conv layer output"""
-    box_xy, box_wh, box_embedding, object_prob = yolo_head(feats, anchors, input_shape)
+    box_xy, box_wh, box_embedding, object_prob = yolo_head(feats, anchors, input_shape, plus=True)
     boxes = yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape)
     boxes = K.reshape(boxes, [-1, 4])
 
     num_unseen = num_classes - num_seen
-    for _ in range(4):
-        embeddings = K.expand_dims(embeddings, 0)
     box_confidence = K.max(object_prob, axis=-1, keepdims=True)
 
     box_class_probs = cosine_similarity(K.expand_dims(box_embedding, -2), embeddings)
@@ -170,12 +255,13 @@ def yolo_eval(yolo_outputs,
               score_threshold=.6,
               iou_threshold=.5):
     """Evaluate YOLO model on given input and return filtered boxes."""
-    num_layers = len(yolo_outputs)
     anchor_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
+    num_layers = len(anchor_mask)
     input_shape = K.shape(yolo_outputs[0])[1:3] * 32
     num_classes, _ = embeddings.shape
     num_unseen = num_classes - num_seen
     embeddings = K.cast(embeddings, K.dtype(yolo_outputs[0]))
+
     boxes = []
     box_scores = []
     for l in range(num_layers):
@@ -324,11 +410,11 @@ def box_iou(b1, b2):
     return iou
 
 
-def cosine_similarity(tensor0, tensor1, axis=-1):
+def cosine_similarity(tensor0, tensor1):
     """Calculate cosine similarity between two embedding vectors"""
-    tensor0_norm = K.sqrt(K.sum(K.square(tensor0), axis=axis))
-    tensor1_norm = K.sqrt(K.sum(K.square(tensor1), axis=axis))
-    inner_prod = K.sum(tensor0 * tensor1, axis=axis) / (tensor0_norm * tensor1_norm)
+    tensor0_norm = K.sqrt(K.sum(K.square(tensor0), axis=-1))
+    tensor1_norm = K.sqrt(K.sum(K.square(tensor1), axis=-1))
+    inner_prod = K.sum(tensor0 * tensor1, axis=-1) / (tensor0_norm * tensor1_norm)
     return inner_prod
 
 
@@ -357,7 +443,7 @@ def category_loss(y_true, y_pred, true_class_index):
 
     Parameters
     ----------
-    y_true: GloVe embedding matrix, shape=(b, 1, 1, 1, num_seen, 300)
+    y_true: GloVe embedding matrix, shape=(num_seen, 300)
     y_pred: yolo output embeddings, shape=(b, h, w, anchors, 300)
     true_class_index: class index of ground truth embedding, shape=(b, h, w, anchors, num_seen)
     """
@@ -394,7 +480,7 @@ def class_relation(true_class_index, embedding):
     return K.relu(relation)
 
 
-def yolo_loss(args, anchors, num_seen, ignore_thresh=.5):
+def yolo_loss(args, anchors, num_seen, ignore_thresh=.5, plus=False):
     """Return yolo_loss tensor
 
     Parameters
@@ -405,6 +491,8 @@ def yolo_loss(args, anchors, num_seen, ignore_thresh=.5):
     anchors: array, shape=(N, 2), wh
     num_seen: integer
     ignore_thresh: float, the iou threshold whether to ignore object confidence loss
+    plus: if true, calculate yolo plus model loss
+
     Returns
     -------
     loss: tensor, shape=(1,)
@@ -420,16 +508,16 @@ def yolo_loss(args, anchors, num_seen, ignore_thresh=.5):
     loss = 0
     m = K.shape(yolo_outputs[0])[0]  # batch size, tensor
     mf = K.cast(m, K.dtype(yolo_outputs[0]))
-    for _ in range(3):
+    for i in range(3):
         embeddings = K.expand_dims(embeddings, 1)
 
     for l in range(num_layers):
         object_mask = y_true[l][..., 4:5]
         true_class_probs = y_true[l][..., 5:]
 
-        grid, raw_pred, pred_xy, pred_wh, pred_box_embedding = yolo_head(
-            yolo_outputs[l], anchors[anchor_mask[l]], input_shape, calc_loss=True
-        )
+        grid, raw_pred, pred_xy, pred_wh, pred_embedding = \
+            yolo_head(yolo_outputs[l], anchors[anchor_mask[l]], input_shape, calc_loss=True, plus=plus)
+
         pred_box = K.concatenate([pred_xy, pred_wh])
 
         # Darknet raw box to calculate loss.
@@ -456,23 +544,25 @@ def yolo_loss(args, anchors, num_seen, ignore_thresh=.5):
         raw_pred_xy = raw_pred[..., 0:2]
         raw_pred_wh = raw_pred[..., 2:4]
         raw_pred_objectness = raw_pred[..., 4:]
-        raw_pred_box_embedding = pred_box_embedding
+        raw_pred_embedding = pred_embedding
+        # rescale relation to [0, 1]
         true_relation = 0.5 * (class_relation(true_class_probs, embeddings) + 1)
 
-        # binary cross entropy performs better than categorical cross entropy
         xy_loss = object_mask * box_loss_scale * K.binary_crossentropy(raw_true_xy, raw_pred_xy, True)
         wh_loss = object_mask * box_loss_scale * 0.5 * K.square(raw_true_wh - raw_pred_wh)
-        # both positive and negative samples contribute to object loss
         object_loss = object_mask * K.binary_crossentropy(object_mask * true_relation, raw_pred_objectness, True) + \
-                      (1 - object_mask) *  \
+                      (1 - object_mask) * \
                       K.binary_crossentropy(object_mask * true_relation, raw_pred_objectness, True) * ignore_mask
-        # embarrassingly simple ZSL loss
-        embedding_loss = object_mask * category_loss(embeddings[..., :num_seen, :], raw_pred_box_embedding,
+        embedding_loss = object_mask * category_loss(embeddings[..., :num_seen, :], raw_pred_embedding,
                                                      true_class_probs[..., :num_seen])
 
         xy_loss = K.sum(xy_loss) / mf
         wh_loss = K.sum(wh_loss) / mf
         object_loss = K.sum(object_loss) / mf
         embedding_loss = K.sum(embedding_loss) / mf
-        loss += xy_loss + wh_loss + object_loss + embedding_loss
+        if plus:
+            loss += embedding_loss
+        else:
+            loss += xy_loss + wh_loss + object_loss + embedding_loss
+
     return loss

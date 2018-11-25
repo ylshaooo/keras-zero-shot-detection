@@ -6,10 +6,10 @@ import os
 
 import numpy as np
 from PIL import Image
-from tqdm import tqdm
-from keras import backend as K
-from keras.layers import Input
+import keras.backend as K
+import keras.layers as KL
 from sklearn.preprocessing import normalize
+from tqdm import tqdm
 
 from yolo3.model import yolo_body, yolo_plus_body, yolo_eval
 from yolo3.utils import letterbox_image
@@ -24,7 +24,7 @@ total_classes = seen_classes + unseen_classes
 
 class YOLO(object):
     def __init__(self):
-        self.weight_path = 'logs/trained_weights_02.h5'
+        self.weight_path = 'logs/voc/trained_weights_final.h5'
         self.anchors_path = 'model_data/yolo_anchors.txt'
         self.embedding_path = 'model_data/glove_embedding.npy'
         self.predict_dir = 'data/predicted/'
@@ -44,25 +44,23 @@ class YOLO(object):
         return np.array(anchors).reshape(-1, 2)
 
     def generate(self):
-        model_path = os.path.expanduser(self.weight_path)
-        assert model_path.endswith('.h5'), 'Keras model or weights must be a .h5 file.'
+        weight_path = os.path.expanduser(self.weight_path)
+        assert weight_path.endswith('.h5'), 'Keras model or weights must be a .h5 file.'
 
         # Load model, or construct model and load weights.
         num_anchors = len(self.anchors)
-
-        image_input = Input(shape=self.model_image_size + (3,))
-        anchor_input = Input(shape=(num_anchors, 2))
-        self.yolo_model = yolo_body(image_input, num_anchors // 3)
-        self.yolo_plus_model = yolo_plus_body([image_input, anchor_input], self.yolo_model.outputs, num_anchors // 3)
-        self.yolo_model.load_weights(self.weight_path, by_name=True)
-        print('{} model, anchors and classes loaded.'.format(model_path))
+        image_inut = KL.Input(shape=self.model_image_size + (3,))
+        anchor_input = KL.Input(shape=(num_anchors, 2))
+        self.yolo_model = yolo_body(image_inut, num_anchors // 3)
+        self.yolo_plus_model = yolo_plus_body([image_inut, anchor_input], self.yolo_model.outputs, num_anchors // 3)
+        self.yolo_plus_model.load_weights(self.weight_path)
+        print('{} model, anchors and classes loaded.'.format(weight_path))
 
         # Generate output tensor targets for filtered bounding boxes.
         embeddings = np.load(self.embedding_path)
         embeddings = normalize(embeddings)
-        self.input_image_shape = K.placeholder(shape=(2,))
-        boxes, scores, classes = yolo_eval(self.yolo_model.output, self.anchors, self.num_seen,
-                                           embeddings, self.input_image_shape,
+        boxes, scores, classes = yolo_eval(self.yolo_plus_model.output, self.anchors, self.num_seen,
+                                           embeddings, self.model_image_size,
                                            score_threshold=self.score, iou_threshold=self.iou)
         return boxes, scores, classes
 
@@ -86,9 +84,8 @@ class YOLO(object):
         out_boxes, out_scores, out_classes = self.sess.run(
             [self.boxes, self.scores, self.classes],
             feed_dict={
-                self.yolo_model.inputs[0]: image_data,
-                self.yolo_model.inputs[1]: anchors,
-                self.input_image_shape: [image.size[1], image.size[0]],
+                self.yolo_plus_model.inputs[0]: image_data,
+                self.yolo_plus_model.inputs[1]: anchors,
                 K.learning_phase(): 0
             }
         )
@@ -119,6 +116,7 @@ def _main():
         test_img = rf.readlines()
     test_img = [c.strip() for c in test_img]
 
+    K.clear_session()   # get a new session
     for img_path in tqdm(test_img):
         img_path = img_path.split()[0]
         yolo.detect_image(img_path)

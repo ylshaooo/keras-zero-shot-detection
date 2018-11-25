@@ -67,7 +67,7 @@ def _main():
     embedding_path = 'model_data/glove_embedding.npy'
     log_dir = 'logs/voc/'
     anchors_path = 'model_data/yolo_anchors.txt'
-    weights_path = 'model_data/darknet53_weights.h5'
+    weights_path = 'model_data/darknet53.h5'
 
     num_seen = 16
     input_shape = (416, 416)  # multiple of 32, hw
@@ -92,6 +92,7 @@ def _main():
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=3, verbose=1)
     early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=1)
 
+    K.clear_session()
     yolo_model, loss_model = create_model(input_shape, embedding_shape, anchors, num_seen,
                                           weights_path=weights_path)
 
@@ -184,7 +185,6 @@ def get_anchors(anchors_path):
 def create_model(input_shape, embedding_shape, anchors, num_seen, load_pretrained=True,
                  weights_path='model_data/yolo_weights.h5'):
     """create the training model"""
-    K.clear_session()  # get a new session
     h, w = input_shape
     num_anchors = len(anchors)
     num_classes, _ = embedding_shape
@@ -215,7 +215,7 @@ def create_model(input_shape, embedding_shape, anchors, num_seen, load_pretraine
 
 def create_finetune_model(input_shape, embedding_shape, yolo_model, anchors, num_seen):
     # freeze yolo model weights
-    for i in range(len(yolo_model)):
+    for i in range(len(yolo_model.layers)):
         yolo_model.layers[i].trainable = False
     print('Freeze yolo model layers.')
 
@@ -228,7 +228,7 @@ def create_finetune_model(input_shape, embedding_shape, yolo_model, anchors, num
                               num_anchors // 3, 5 + num_classes)) for l in range(3)]
     y_embedding = KL.Input(shape=embedding_shape)
 
-    model_plus_body = yolo_plus_body([yolo_model.inputs, anchor_input], yolo_model.outputs, num_anchors // 3)
+    model_plus_body = yolo_plus_body(yolo_model.inputs + [anchor_input], yolo_model.outputs, num_anchors // 3)
 
     model_loss = KL.Lambda(lambda x: yolo_loss(x, anchors=anchors, num_seen=num_seen, ignore_thresh=0.5, plus=True),
                            name='yolo_loss')([*model_plus_body.output, *y_true, y_embedding])

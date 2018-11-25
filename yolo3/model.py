@@ -6,8 +6,7 @@ import keras.backend as K
 import keras.layers as KL
 import numpy as np
 import tensorflow as tf
-from keras.layers.advanced_activations import LeakyReLU
-from keras.layers.normalization import BatchNormalization
+from keras.initializers import glorot_uniform
 from keras.models import Model
 from keras.regularizers import l2
 
@@ -15,9 +14,9 @@ from yolo3.utils import compose
 
 
 class ROIAlign(KL.Layer):
-    def __init__(self, input_shape, pool_shape=(7, 7), **kwargs):
+    def __init__(self, image_shape, pool_shape=(7, 7), **kwargs):
         super(ROIAlign, self).__init__(**kwargs)
-        self.image_shape = input_shape
+        self.image_shape = tuple(image_shape)
         self.pool_shape = tuple(pool_shape)
 
     def call(self, inputs):
@@ -56,8 +55,11 @@ class ROIAlign(KL.Layer):
 @wraps(KL.Conv2D)
 def DarknetConv2D(*args, **kwargs):
     """Wrapper to set Darknet parameters for Convolution2D."""
-    darknet_conv_kwargs = {'kernel_regularizer': l2(5e-4),
-                           'padding': 'valid' if kwargs.get('strides') == (2, 2) else 'same'}
+    darknet_conv_kwargs = {
+        'padding': 'valid' if kwargs.get('strides') == (2, 2) else 'same',
+        'kernel_initializer': glorot_uniform(),
+        'kernel_regularizer': l2(5e-4),
+    }
     darknet_conv_kwargs.update(kwargs)
     return KL.Conv2D(*args, **darknet_conv_kwargs)
 
@@ -67,8 +69,8 @@ def DarknetConv2D_BN_Leaky(*args, **kwargs):
     no_bias_kwargs = {'use_bias': False}
     no_bias_kwargs.update(kwargs)
     return compose(DarknetConv2D(*args, **no_bias_kwargs),
-                   BatchNormalization(),
-                   LeakyReLU(alpha=0.1))
+                   KL.BatchNormalization(),
+                   KL.LeakyReLU(alpha=0.1))
 
 
 def resblock_body(x, num_filters, num_blocks):
@@ -106,23 +108,23 @@ def make_last_layers(x, num_filters, out_filters):
     return x, y
 
 
-def make_plus_layers(x, y, anchors, input_shape, num_filters, num_anchors, out_filters):
+def make_plus_layers(x, y, anchors, image_shape, num_anchors, num_filters):
     """Resample roi on feature and predict new embedding."""
     s = K.int_shape(y)
 
-    y = KL.Lambda(lambda x: x[..., :num_anchors * num_filters])(y)
-    roi_box = compose(KL.Reshape((s[1] * s[2], num_anchors, out_filters)),
-                      KL.Lambda(lambda x: x[..., :4]))(y)
+    y_ = KL.Lambda(lambda x: x[..., :num_anchors * 24])(y)
+    roi_box = compose(KL.Reshape((s[1] * s[2], num_anchors, 24)),
+                      KL.Lambda(lambda x: x[..., :4]))(y_)
 
-    e = compose(ROIAlign(input_shape),
+    e = compose(ROIAlign(image_shape),
                 DarknetConv2D_BN_Leaky(num_filters * 2, (7, 7), padding='valid'),
                 DarknetConv2D_BN_Leaky(num_filters, (1, 1)),
                 KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 2), 1)),
                 KL.Dense(300),
                 KL.Lambda(lambda x: K.reshape(x, (-1, s[1], s[2], num_anchors * 300))))([roi_box, x, anchors])
 
-    y = KL.Concatenate()([y, e])
-    return y
+    y_ = KL.Concatenate()([y_, e])
+    return y_
 
 
 def yolo_body(inputs, num_anchors):
@@ -155,13 +157,13 @@ def yolo_plus_body(inputs, feature, num_anchors):
     anchors = KL.Reshape((1, num_anchors * 3, 2))(inputs[1])
 
     a1 = KL.Lambda(lambda x: x[..., 6:9, :])(anchors)
-    y1 = make_plus_layers(feature[0], feature[3], a1, image_shape, num_anchors, 512, 24)
+    y1 = make_plus_layers(feature[0], feature[3], a1, image_shape, num_anchors, 512)
 
     a2 = KL.Lambda(lambda x: x[..., 3:6, :])(anchors)
-    y2 = make_plus_layers(feature[1], feature[4], a2, image_shape, num_anchors, 256, 24)
+    y2 = make_plus_layers(feature[1], feature[4], a2, image_shape, num_anchors, 256)
 
     a3 = KL.Lambda(lambda x: x[..., 0:3, :])(anchors)
-    y3 = make_plus_layers(feature[2], feature[5], a3, image_shape, num_anchors, 128, 24)
+    y3 = make_plus_layers(feature[2], feature[5], a3, image_shape, num_anchors, 128)
 
     return Model(inputs, [y1, y2, y3])
 

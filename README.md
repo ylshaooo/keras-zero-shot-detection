@@ -10,7 +10,7 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
     Object detection is a computer vision task that deals with detecting instances of
     semantic objects of a certain class (such as humans, buildings or cars) in digital
     images and videos, if present, to return the spatial location and extent of each
-    object instance (e.g., via a bounding box). 
+    object instance, e.g. via a bounding box. 
 
 - ### Zero-Shot Learning
 
@@ -25,7 +25,9 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
     zero-shot object detection (ZSD) task aims to recognize and localize instances of
     object classes with no training examples, purely based on auxiliary information that
     describes the class characteristics. We apply the mainstream ZSL approach on the
-    famous [YOLO](https://arxiv.org/abs/1506.02640) detection model to achieve this goal.
+    famous [YOLO](https://arxiv.org/abs/1506.02640) detection model to achieve the transfer
+    ability. As follows, the classes **dog**, **sofa** and **train** are not seen during
+    training stage, but we are still able to detect them with our model.
     
     ![](results/00001_res.jpg)  
     ![](results/00002_res.jpg)

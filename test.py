@@ -47,11 +47,13 @@ class YOLO(object):
         weight_path = os.path.expanduser(self.weight_path)
         assert weight_path.endswith('.h5'), 'Keras model or weights must be a .h5 file.'
 
-        # Load model, or construct model and load weights.
         num_anchors = len(self.anchors)
         image_inut = KL.Input(shape=self.model_image_size + (3,))
         anchor_input = KL.Input(shape=(num_anchors, 2))
+
+        print('Create YOLO model.')
         self.yolo_model = yolo_body(image_inut, num_anchors // 3)
+        print('Create YOLO plus model.')
         self.yolo_plus_model = yolo_plus_body([image_inut, anchor_input], self.yolo_model.outputs, num_anchors // 3)
         self.yolo_plus_model.load_weights(self.weight_path)
         print('{} model, anchors and classes loaded.'.format(weight_path))
@@ -59,8 +61,9 @@ class YOLO(object):
         # Generate output tensor targets for filtered bounding boxes.
         embeddings = np.load(self.embedding_path)
         embeddings = normalize(embeddings)
-        boxes, scores, classes = yolo_eval(self.yolo_plus_model.output, self.anchors, self.num_seen,
-                                           embeddings, self.model_image_size,
+        self.input_image_shape = K.placeholder(shape=(2,))
+        boxes, scores, classes = yolo_eval(self.yolo_plus_model.outputs, self.anchors, self.num_seen,
+                                           embeddings, self.input_image_shape,
                                            score_threshold=self.score, iou_threshold=self.iou)
         return boxes, scores, classes
 
@@ -86,7 +89,7 @@ class YOLO(object):
             feed_dict={
                 self.yolo_plus_model.inputs[0]: image_data,
                 self.yolo_plus_model.inputs[1]: anchors,
-                K.learning_phase(): 0
+                self.input_image_shape: [image.size[1], image.size[0]],
             }
         )
 

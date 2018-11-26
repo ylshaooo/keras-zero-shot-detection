@@ -67,7 +67,7 @@ def _main():
     embedding_path = 'model_data/glove_embedding.npy'
     log_dir = 'logs/voc/'
     anchors_path = 'model_data/yolo_anchors.txt'
-    weights_path = 'model_data/darknet53.h5'
+    weights_path = 'model_data/darknet53_weights.h5'
 
     num_seen = 16
     input_shape = (416, 416)  # multiple of 32, hw
@@ -102,9 +102,9 @@ def _main():
     loss_model.compile(optimizer=Adam(lr=1e-3), loss={'yolo_loss': lambda y_true, y_pred: y_pred})
     loss_model.fit_generator(
         DataGenerator(lines[:num_train], embedding, anchors, input_shape, batch_size),
-        steps_per_epoch=500,
+        steps_per_epoch=1000,
         validation_data=DataGenerator(lines[num_train:], embedding, anchors, input_shape, batch_size),
-        validation_steps=50,
+        validation_steps=100,
         epochs=10,
         initial_epoch=0,
         workers=2,
@@ -122,7 +122,7 @@ def _main():
         steps_per_epoch=1000,
         validation_data=DataGenerator(lines[num_train:], embedding, anchors, input_shape, batch_size),
         validation_steps=100,
-        epochs=20,
+        epochs=25,
         initial_epoch=10,
         workers=2,
         use_multiprocessing=True,
@@ -135,14 +135,14 @@ def _main():
         steps_per_epoch=1000,
         validation_data=DataGenerator(lines[num_train:], embedding, anchors, input_shape, batch_size),
         validation_steps=100,
-        epochs=30,
-        initial_epoch=20,
+        epochs=40,
+        initial_epoch=25,
         workers=2,
         use_multiprocessing=True,
         callbacks=[logging, checkpoint]
     )
     print('Save weights of the first two stages.')
-    yolo_model.save_weights(log_dir + 'trained_weights_yolo.h5')
+    loss_model.save_weights(log_dir + 'trained_weights_yolo.h5')
 
     # third stage: resample feature map and fine-tune model
     finetune_model = create_finetune_model(input_shape, embedding_shape, yolo_model, anchors, num_seen)
@@ -152,11 +152,11 @@ def _main():
     finetune_model.compile(optimizer=Adam(lr=1e-4), loss={'yolo_loss': lambda y_true, y_pred: y_pred})
     finetune_model.fit_generator(
         DataGenerator(lines[:num_train], embedding, anchors, input_shape, batch_size, final=True),
-        steps_per_epoch=2000,
+        steps_per_epoch=1500,
         validation_data=DataGenerator(lines[num_train:], embedding, anchors, input_shape, batch_size, final=True),
         validation_steps=200,
-        epochs=60,
-        initial_epoch=30,
+        epochs=80,
+        initial_epoch=40,
         workers=2,
         use_multiprocessing=True,
         callbacks=[logging, checkpoint, reduce_lr, early_stopping]
@@ -200,8 +200,7 @@ def create_model(input_shape, embedding_shape, anchors, num_seen, load_pretraine
     if load_pretrained:
         model_body.load_weights(weights_path, by_name=True, skip_mismatch=True)
         print('Load weights {}.'.format(weights_path))
-        # layers of darknet53
-        num = 185
+        num = len(model_body.layers) - 3
         for i in range(num):
             model_body.layers[i].trainable = False
         print('Freeze the first {} layers of total {} layers.'.format(num, len(model_body.layers)))

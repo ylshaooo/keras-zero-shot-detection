@@ -6,7 +6,6 @@ import keras.backend as K
 import keras.layers as KL
 import numpy as np
 import tensorflow as tf
-from keras.initializers import glorot_uniform
 from keras.models import Model
 from keras.regularizers import l2
 
@@ -57,7 +56,6 @@ def DarknetConv2D(*args, **kwargs):
     """Wrapper to set Darknet parameters for Convolution2D."""
     darknet_conv_kwargs = {
         'padding': 'valid' if kwargs.get('strides') == (2, 2) else 'same',
-        'kernel_initializer': glorot_uniform(),
         'kernel_regularizer': l2(5e-4),
     }
     darknet_conv_kwargs.update(kwargs)
@@ -190,7 +188,6 @@ def yolo_head(feats, anchors, input_shape, calc_loss=False, plus=False):
     box_xy = (K.sigmoid(feats[..., :2]) + grid) / K.cast(grid_shape[::-1], K.dtype(feats))
     box_wh = K.exp(feats[..., 2:4]) * anchors_tensor / K.cast(input_shape[::-1], K.dtype(feats))
     obj_prob = K.sigmoid(feats[..., 4:])
-    box_embedding = K.tanh(box_embedding)
 
     if calc_loss:
         return grid, feats, box_xy, box_wh, box_embedding
@@ -507,10 +504,10 @@ def yolo_loss(args, anchors, num_seen, ignore_thresh=.5, plus=False):
     anchor_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
     input_shape = K.cast(K.shape(yolo_outputs[0])[1:3] * 32, K.dtype(y_true[0]))
     grid_shapes = [K.cast(K.shape(yolo_outputs[l])[1:3], K.dtype(y_true[0])) for l in range(num_layers)]
-    loss = 0
+    loss = 0.
     m = K.shape(yolo_outputs[0])[0]  # batch size, tensor
     mf = K.cast(m, K.dtype(yolo_outputs[0]))
-    for i in range(3):
+    for _ in range(3):
         embeddings = K.expand_dims(embeddings, 1)
 
     for l in range(num_layers):

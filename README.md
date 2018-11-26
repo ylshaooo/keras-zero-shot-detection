@@ -1,4 +1,4 @@
-# keras-Zero-Shot-Detection
+# Zero-Shot-Detection
 
 ## Introduction
 

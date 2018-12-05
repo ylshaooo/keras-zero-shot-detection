@@ -80,12 +80,11 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
 - ### Feature Resampling
     
     We finetune the zero-shot yolo model to obtain better embedding prediction by adding
-    a feature resampling module, ROIAlign, proposed by [Mask R-CNN](https://arxiv.org/abs/1703.06870).
+    a feature resampling layer, RoIAlign, proposed by [Mask R-CNN](https://arxiv.org/abs/1703.06870).
     We call it Zero-Shot YOLO+. Actually, the model is no longer a standard one-stage
-    detector. It got reasonable results but not very robust. We increase the MAP on VOC
-    dataset by 2 percentage, i.e. 55.63%. The improvement work of model architecture and
+    detector. It got reasonable results and stably increase the MAP on VOC
+    dataset by 2 percentage, i.e. 55.36%. The improvement work of model architecture and
     parameters will be continued.
-
 
 ---
 
@@ -128,7 +127,7 @@ needed.
 
 3. The inference result is not totally the same as Darknet but the difference is small.
 
-4. The speed is slower than Darknet. Replacing PIL with opencv may help a little.
+4. The speed is slower than Darknet. Replacing PIL with OpenCV may help a little.
 
 5. Always load pretrained weights and freeze layers in the first stage of training. Or
 try Darknet training. It's OK if there is a mismatch warning.
@@ -137,4 +136,4 @@ try Darknet training. It's OK if there is a mismatch warning.
 your goal. And add further strategy if needed.
 
 7. For data and results analysis, you are recommended to run our scripts in the anaylsis 
-directory as we provided.
+directory as we provide.

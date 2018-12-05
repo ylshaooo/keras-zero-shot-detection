@@ -122,24 +122,11 @@ def _main():
         steps_per_epoch=1000,
         validation_data=DataGenerator(lines[num_train:], embedding, anchors, input_shape, batch_size),
         validation_steps=100,
-        epochs=25,
+        epochs=60,
         initial_epoch=10,
         workers=2,
         use_multiprocessing=True,
-        callbacks=[logging, checkpoint]
-    )
-
-    loss_model.compile(optimizer=Adam(lr=1e-5), loss={'yolo_loss': lambda y_true, y_pred: y_pred})
-    loss_model.fit_generator(
-        DataGenerator(lines[:num_train], embedding, anchors, input_shape, batch_size),
-        steps_per_epoch=1000,
-        validation_data=DataGenerator(lines[num_train:], embedding, anchors, input_shape, batch_size),
-        validation_steps=100,
-        epochs=40,
-        initial_epoch=25,
-        workers=2,
-        use_multiprocessing=True,
-        callbacks=[logging, checkpoint]
+        callbacks=[logging, checkpoint, reduce_lr, early_stopping]
     )
     print('Save weights of the first two stages.')
     loss_model.save_weights(log_dir + 'trained_weights_yolo.h5')
@@ -155,8 +142,8 @@ def _main():
         steps_per_epoch=1500,
         validation_data=DataGenerator(lines[num_train:], embedding, anchors, input_shape, batch_size, final=True),
         validation_steps=200,
-        epochs=80,
-        initial_epoch=40,
+        epochs=40,
+        initial_epoch=0,
         workers=2,
         use_multiprocessing=True,
         callbacks=[logging, checkpoint, reduce_lr, early_stopping]
@@ -217,6 +204,7 @@ def create_finetune_model(input_shape, embedding_shape, yolo_model, anchors, num
     for i in range(len(yolo_model.layers)):
         yolo_model.layers[i].trainable = False
     print('Freeze yolo model layers.')
+    print('Create finetune model.')
 
     h, w = input_shape
     num_anchors = len(anchors)

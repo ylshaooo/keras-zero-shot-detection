@@ -56,6 +56,7 @@ def DarknetConv2D(*args, **kwargs):
     """Wrapper to set Darknet parameters for Convolution2D."""
     darknet_conv_kwargs = {
         'padding': 'valid' if kwargs.get('strides') == (2, 2) else 'same',
+        'kernel_initializer': 'glorot_normal',
         'kernel_regularizer': l2(5e-4),
     }
     darknet_conv_kwargs.update(kwargs)
@@ -69,6 +70,17 @@ def DarknetConv2D_BN_Leaky(*args, **kwargs):
     return compose(DarknetConv2D(*args, **no_bias_kwargs),
                    KL.BatchNormalization(),
                    KL.LeakyReLU(alpha=0.1))
+
+
+@wraps(KL.Dense)
+def DarknetDense(*args, **kwargs):
+    """Wrapper to set Darknet parameters for Dense."""
+    darknet_dense_kwargs = {
+        'kernel_initializer': 'glorot_normal',
+        'kernel_regularizer': l2(5e-4),
+    }
+    darknet_dense_kwargs.update(kwargs)
+    return KL.Dense(*args, **darknet_dense_kwargs)
 
 
 def resblock_body(x, num_filters, num_blocks):
@@ -114,14 +126,14 @@ def make_plus_layers(x, y, anchors, image_shape, num_anchors, num_filters):
     roi_box = compose(KL.Reshape((s[1] * s[2], num_anchors, 24)),
                       KL.Lambda(lambda x: x[..., :4]))(y_)
 
-    e = compose(ROIAlign(image_shape),
-                DarknetConv2D_BN_Leaky(num_filters * 2, (7, 7), padding='valid'),
-                DarknetConv2D_BN_Leaky(num_filters, (1, 1)),
-                KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 2), 1)),
-                KL.Dense(300),
-                KL.Lambda(lambda x: K.reshape(x, (-1, s[1], s[2], num_anchors * 300))))([roi_box, x, anchors])
+    cls = compose(ROIAlign(image_shape),
+                  DarknetConv2D_BN_Leaky(num_filters * 2, (7, 7), padding='valid'),
+                  DarknetConv2D_BN_Leaky(num_filters, (1, 1)),
+                  KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 2), 1)),
+                  DarknetDense(300),
+                  KL.Lambda(lambda x: K.reshape(x, (-1, s[1], s[2], num_anchors * 300))))([roi_box, x, anchors])
 
-    y_ = KL.Concatenate()([y_, e])
+    y_ = KL.Concatenate()([y_, cls])
     return y_
 
 
@@ -417,55 +429,6 @@ def cosine_similarity(tensor0, tensor1):
     return inner_prod
 
 
-def hinge_loss(y_true, y_pred, true_class_index, num_seen):
-    """Calculate max margin loss of predicted embeddings
-
-    Parameters
-    ----------
-    y_true: GloVe embedding matrix, shape=(b, 1, 1, 1, num_seen, 300)
-    y_pred: yolo output embeddings, shape=(b, h, w, anchors, 300)
-    true_class_index: class index of ground truth embedding, shape=(b, h, w, anchors, num_seen)
-    num_seen: number of seen classes
-    """
-    y_pred = K.expand_dims(y_pred, -2)
-    scores = cosine_similarity(y_pred, y_true)  # shape=(b, h, w, anchors, num_seen)
-    true_class_scores = K.max(true_class_index * scores, -1)  # shape=(b, h, w, anchors)
-    loss = 0
-    for i in range(num_seen):
-        loss += K.maximum(0., 0.2 - true_class_scores + scores[..., i])
-    loss = K.expand_dims(loss - 1, -1)
-    return loss
-
-
-def category_loss(y_true, y_pred, true_class_index):
-    """Calculate loss of predicted embeddings in embarrassing algorithm
-
-    Parameters
-    ----------
-    y_true: GloVe embedding matrix, shape=(num_seen, 300)
-    y_pred: yolo output embeddings, shape=(b, h, w, anchors, 300)
-    true_class_index: class index of ground truth embedding, shape=(b, h, w, anchors, num_seen)
-    """
-    y_pred = K.expand_dims(y_pred, -2)
-    pred_class = K.softmax(cosine_similarity(y_true, y_pred), -1)
-    loss = K.categorical_crossentropy(true_class_index, pred_class)
-    loss = K.expand_dims(loss, -1)
-    return loss
-
-
-def kl_divergence(y_true, y_pred):
-    """
-    Parameters
-    ----------
-    y_true: class relation, shape=(b, h, w, anchors, 20)
-    y_pred: yolo output relation, shape=(b, h, w, anchors, 20)
-    """
-    eps = 1e-4
-    loss = y_pred * K.log((y_pred + eps) / (y_true + eps)) + \
-           (1 - y_pred) * K.log((1 - y_pred + eps) / (1 - y_true + eps))
-    return loss
-
-
 def class_relation(true_class_index, embedding):
     """
     Parameters
@@ -559,9 +522,70 @@ def yolo_loss(args, anchors, num_seen, ignore_thresh=.5, plus=False):
         wh_loss = K.sum(wh_loss) / mf
         object_loss = K.sum(object_loss) / mf
         embedding_loss = K.sum(embedding_loss) / mf
-        if plus:
-            loss += embedding_loss
-        else:
-            loss += xy_loss + wh_loss + object_loss + embedding_loss
+        loss += xy_loss + wh_loss + object_loss + embedding_loss
 
+    return loss
+
+
+# Loss Functions
+def hinge_loss(y_true, y_pred, true_class_index, num_seen):
+    """Calculate max margin loss of predicted embeddings
+
+    Parameters
+    ----------
+    y_true: GloVe embedding matrix, shape=(b, 1, 1, 1, num_seen, 300)
+    y_pred: yolo output embeddings, shape=(b, h, w, anchors, 300)
+    true_class_index: class index of ground truth embedding, shape=(b, h, w, anchors, num_seen)
+    num_seen: number of seen classes
+    """
+    y_pred = K.expand_dims(y_pred, -2)
+    scores = cosine_similarity(y_pred, y_true)  # shape=(b, h, w, anchors, num_seen)
+    true_class_scores = K.max(true_class_index * scores, -1)  # shape=(b, h, w, anchors)
+    loss = 0
+    for i in range(num_seen):
+        loss += K.maximum(0., 0.2 - true_class_scores + scores[..., i])
+    loss = K.expand_dims(loss - 1, -1)
+    return loss
+
+
+def category_loss(y_true, y_pred, true_class_index):
+    """Calculate loss of predicted embeddings in embarrassing algorithm
+
+    Parameters
+    ----------
+    y_true: GloVe embedding matrix, shape=(num_seen, 300)
+    y_pred: yolo output embeddings, shape=(b, h, w, anchors, 300)
+    true_class_index: class index of ground truth embedding, shape=(b, h, w, anchors, num_seen)
+    """
+    y_pred = K.expand_dims(y_pred, -2)
+    pred_class = K.softmax(cosine_similarity(y_true, y_pred), -1)
+    loss = K.categorical_crossentropy(true_class_index, pred_class)
+    loss = K.expand_dims(loss, -1)
+    return loss
+
+
+def kl_divergence(y_true, y_pred):
+    """
+    Parameters
+    ----------
+    y_true: class relation, shape=(b, h, w, anchors, 20)
+    y_pred: yolo output relation, shape=(b, h, w, anchors, 20)
+    """
+    eps = 1e-4
+    loss = y_pred * K.log((y_pred + eps) / (y_true + eps)) + \
+           (1 - y_pred) * K.log((1 - y_pred + eps) / (1 - y_true + eps))
+    return loss
+
+
+def smooth_l1_loss(y_true, y_pred):
+    """Calculate smooth-L1 loss.
+
+    Parameters
+    ----------
+    y_true: true box offset, shape=(b, h, w, anchors, 4)
+    y_pred: output box offset, shape=(b, h, w, anchors, 4)
+    """
+    diff = K.abs(y_true - y_pred)
+    less_than_one = K.cast(K.less(diff, 1.0), 'float32')
+    loss = (less_than_one * 0.5 * diff ** 2) + (1 - less_than_one) * (diff - 0.5)
     return loss

@@ -1,5 +1,3 @@
-"""Demo to visualize detection results."""
-
 import colorsys
 import os
 from timeit import default_timer as timer
@@ -7,33 +5,30 @@ from timeit import default_timer as timer
 import numpy as np
 from PIL import Image, ImageFont, ImageDraw
 from keras import backend as K
-from keras.models import load_model
+from keras.layers import Input
 
-from yolo3.model import yolo_eval
-from yolo3.utils import letterbox_image, normalize
+from yolo3.model import yolo_body, yolo_eval
+from yolo3.utils import letterbox_image
+
+unseen_classes = ['car', 'dog', 'horse', 'sofa', 'train']
 
 
 class YOLO(object):
     def __init__(self):
-        self.model_path = 'logs/trained_weights.h5'    # model path or trained weights path
+        self.weight_path = 'logs/voc/trained_weights_final.h5'
         self.anchors_path = 'model_data/yolo_anchors.txt'
-        self.classes_path = 'model_data/voc_classes.txt'
-        self.embedding_path = 'data/glove_embedding.npy'
-        self.score = 0.1
+        self.attribute_path = 'model_data/attributes.npy'
+        self.score = 0.4
         self.iou = 0.5
         self.num_seen = 16
-        self.class_names = self._get_class()
         self.anchors = self._get_anchors()
         self.sess = K.get_session()
         self.model_image_size = (416, 416)  # fixed size or (None, None), hw
         self.boxes, self.scores, self.classes = self.generate()
 
-    def _get_class(self):
-        classes_path = os.path.expanduser(self.classes_path)
-        with open(classes_path) as f:
-            class_names = f.readlines()
-        class_names = [c.strip() for c in class_names]
-        return class_names
+        hsv_tuples = [(x / len(unseen_classes), 1., 1.) for x in range(len(unseen_classes))]
+        self.colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
+        self.colors = list(map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)), self.colors))
 
     def _get_anchors(self):
         anchors_path = os.path.expanduser(self.anchors_path)
@@ -43,29 +38,21 @@ class YOLO(object):
         return np.array(anchors).reshape(-1, 2)
 
     def generate(self):
-        model_path = os.path.expanduser(self.model_path)
+        model_path = os.path.expanduser(self.weight_path)
         assert model_path.endswith('.h5'), 'Keras model or weights must be a .h5 file.'
 
         # Load model, or construct model and load weights.
-        self.yolo_model = load_model(model_path, compile=False)
+        num_anchors = len(self.anchors)
 
-        print('{} model, anchors, and classes loaded.'.format(model_path))
-
-        # Generate colors for drawing bounding boxes.
-        hsv_tuples = [(x / len(self.class_names), 1., 1.) for x in range(len(self.class_names))]
-        self.colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
-        self.colors = list(map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)), self.colors))
-        np.random.seed(10101)  # Fixed seed for consistent colors across runs.
-        np.random.shuffle(self.colors)  # Shuffle colors to decorrelate adjacent classes.
-        np.random.seed(None)  # Reset seed to default.
-
-        embeddings = np.load(self.embedding_path)
-        embeddings = normalize(embeddings)
+        self.yolo_model = yolo_body(Input(shape=(None, None, 3)), self.num_seen, num_anchors // 3)
+        self.yolo_model.load_weights(self.weight_path, by_name=True)
+        print('{} model, anchors and classes loaded.'.format(model_path))
 
         # Generate output tensor targets for filtered bounding boxes.
+        attribute = np.load(self.attribute_path)
         self.input_image_shape = K.placeholder(shape=(2,))
         boxes, scores, classes = yolo_eval(self.yolo_model.output, self.anchors, self.num_seen,
-                                           embeddings, self.input_image_shape,
+                                           attribute, self.input_image_shape,
                                            score_threshold=self.score, iou_threshold=self.iou)
         return boxes, scores, classes
 
@@ -96,13 +83,12 @@ class YOLO(object):
 
         print('Found {} boxes for {}'.format(len(out_boxes), 'img'))
 
-        # set font to display
         font = ImageFont.truetype(font='font/FiraMono-Medium.otf',
-                                  size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
-        thickness = (image.size[0] + image.size[1]) // 300
+                                  size=np.floor(5e-2 * image.size[1] + 0.5).astype('int32'))
+        thickness = (image.size[0] + image.size[1]) // 250
 
         for i, c in reversed(list(enumerate(out_classes))):
-            predicted_class = self.class_names[self.num_seen:][c]
+            predicted_class = unseen_classes[c]
             box = out_boxes[i]
             score = out_scores[i]
 
@@ -127,7 +113,9 @@ class YOLO(object):
                 draw.rectangle(
                     [left + i, top + i, right - i, bottom - i],
                     outline=self.colors[c])
-            draw.rectangle([tuple(text_origin), tuple(text_origin + label_size)], fill=self.colors[c])
+            draw.rectangle(
+                [tuple(text_origin), tuple(text_origin + label_size)],
+                fill=self.colors[c])
             draw.text(text_origin, label, fill=(0, 0, 0), font=font)
             del draw
 
@@ -141,12 +129,13 @@ class YOLO(object):
 
 def detect_img(yolo):
     while True:
-        # input path to image
-        img = input('Input image filename: ')
+        img_path = input('Input image filename: ')
+        if not img_path:
+            break
         try:
-            image = Image.open(img)
-        except:
-            print('Open Error! Try again!')
+            image = Image.open(img_path)
+        except OSError as e:
+            print(e)
             continue
         else:
             r_image = yolo.detect_image(image)

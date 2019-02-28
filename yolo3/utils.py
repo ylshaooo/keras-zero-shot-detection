@@ -2,9 +2,10 @@
 
 from functools import reduce
 
-import numpy as np
 from PIL import Image
+import numpy as np
 from matplotlib.colors import rgb_to_hsv, hsv_to_rgb
+from sklearn import preprocessing
 
 
 def compose(*funcs):
@@ -24,8 +25,8 @@ def letterbox_image(image, size):
     iw, ih = image.size
     w, h = size
     scale = min(w / iw, h / ih)
-    nw = round(iw * scale)
-    nh = round(ih * scale)
+    nw = int(iw * scale)
+    nh = int(ih * scale)
 
     image = image.resize((nw, nh), Image.BICUBIC)
     new_image = Image.new('RGB', size, (128, 128, 128))
@@ -131,6 +132,4 @@ def get_random_data(annotation_line, input_shape, random=True, max_boxes=20, jit
 
 
 def normalize(array):
-    scale = array.max() - array.min()
-    medium = (array.max() + array.min()) / 2
-    return (array - medium) * 2 / scale
+    return preprocessing.normalize(array)

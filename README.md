@@ -43,7 +43,9 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
     any unseen classes. Unseen classes are as follows.
     
     2. Proved by experiments, we choose glove embedding to best represent each class 
-    semantics. VOC class glove embedding are extracted in `data/glove_embedding.npy`.  
+    semantics. VOC class GloVe embedding are extracted in `data/glove_embedding.npy`. 
+    (Later, we try class attribute vectors provided by [aPascal](http://vision.cs.uiuc.edu/attributes/) 
+    and receive better performance. See attributes in `data` directory.)
     
     3. We apply basic ZSL method in the YOLO model, referring from the 2015 NIPS paper
      "[An embarrassingly simple approach to zero-shot learning](https://dl.acm.org/citation.cfm?id=3045347)".
@@ -53,11 +55,17 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
 
 - ### MAP of Unseen Classes
     
-    U2U mean average precision (MAP) for VOC dataset:
+    U2U mAP for VOC (embedding):
     
     |   car  |   dog  |  sofa  | train  |   mAP  |
     |:------:|:------:|:------:|:------:|:------:|
     | 12.84% | 93.48% | 55.93% | 53.28% | 53.88% |
+    
+    U2U mAP for VOC (attribute):
+    
+    |   car  |   dog  |  sofa  | train  |   mAP  |
+    |:------:|:------:|:------:|:------:|:------:|
+    | 20.84% | 94.83% | 57.54% | 61.13% | 58.60% |
 
 - ### Feature Exaction
 
@@ -82,9 +90,8 @@ referring to [keras-yolo3](https://github.com/qqwweee/keras-yolo3).
     We finetune the zero-shot yolo model to obtain better embedding prediction by adding
     a feature resampling layer, RoIAlign, proposed by [Mask R-CNN](https://arxiv.org/abs/1703.06870).
     We call it Zero-Shot YOLO+. Actually, the model is no longer a standard one-stage
-    detector. It got reasonable results and stably increase the MAP on VOC
-    dataset by 2 percentage, i.e. 55.36%. The improvement work of model architecture and
-    parameters will be continued.
+    detector. It got reasonable results and stably increase the MAP on VOC dataset. The 
+    improvement work of model architecture and parameters will be continued.
 
 ---
 
@@ -137,3 +144,5 @@ your goal. And add further strategy if needed.
 
 7. For data and results analysis, you are recommended to run our scripts in the anaylsis 
 directory as we provide.
+
+8. Better semantic description can improve the results, like attributes.

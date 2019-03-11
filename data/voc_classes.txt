@@ -7,13 +7,13 @@ bus
 cat
 chair
 cow
-dining table
+diningtable
 horse
 motorbike
 person
-potted plant
+pottedplant
 sheep
-tv monitor
+tvmonitor
 car
 dog
 sofa

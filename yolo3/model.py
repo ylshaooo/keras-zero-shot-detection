@@ -143,7 +143,7 @@ def yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape):
     return boxes
 
 
-def yolo_boxes_and_scores(feats, anchors, attributes, num_seen, num_unseen,
+def yolo_boxes_and_scores(feats, anchors, attributes, num_seen, num_classes,
                           input_shape, image_shape):
     """Process Conv layer output"""
     box_xy, box_wh, box_attribute, object_prob = yolo_head(feats, anchors, num_seen, input_shape)
@@ -154,6 +154,7 @@ def yolo_boxes_and_scores(feats, anchors, attributes, num_seen, num_unseen,
         attributes = K.expand_dims(attributes, 0)
     box_confidence = K.max(object_prob, axis=-1, keepdims=True)
 
+    num_unseen = num_classes - num_seen
     box_class_probs = cosine_similarity(K.expand_dims(box_attribute, -2), attributes)
     box_class_probs = K.one_hot(K.argmax(box_class_probs[..., num_seen:], -1), num_unseen)
     box_scores = box_confidence * box_class_probs
@@ -174,14 +175,13 @@ def yolo_eval(yolo_outputs,
     anchor_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
     input_shape = K.shape(yolo_outputs[0])[1:3] * 32
     num_classes, _ = attribute.shape
-    num_unseen = num_classes - num_seen
     attribute = K.cast(attribute, K.dtype(yolo_outputs[0]))
 
     boxes = []
     box_scores = []
     for l in range(num_layers):
         _boxes, _box_scores = yolo_boxes_and_scores(yolo_outputs[l], anchors[anchor_mask[l]],
-                                                    attribute, num_seen, num_unseen, input_shape, image_shape)
+                                                    attribute, num_seen, num_classes, input_shape, image_shape)
         boxes.append(_boxes)
         box_scores.append(_box_scores)
     boxes = K.concatenate(boxes, 0)
@@ -192,7 +192,7 @@ def yolo_eval(yolo_outputs,
     boxes_ = []
     scores_ = []
     classes_ = []
-    for c in range(num_unseen):
+    for c in range(num_classes - num_seen):
         class_boxes = tf.boolean_mask(boxes, mask[:, c])
         class_box_scores = tf.boolean_mask(box_scores[:, c], mask[:, c])
         nms_index = tf.image.non_max_suppression(
@@ -326,7 +326,7 @@ def box_iou(b1, b2):
 
 
 def cosine_similarity(tensor0, tensor1, axis=-1):
-    """Calculate cosine similarity between two embedding vectors"""
+    """Calculate cosine similarity between two attribute vectors"""
     tensor0_norm = K.sqrt(K.sum(K.square(tensor0), axis=axis))
     tensor1_norm = K.sqrt(K.sum(K.square(tensor1), axis=axis))
     inner_prod = K.sum(tensor0 * tensor1, axis=axis) / (tensor0_norm * tensor1_norm)
@@ -334,13 +334,13 @@ def cosine_similarity(tensor0, tensor1, axis=-1):
 
 
 def hinge_loss(y_true, y_pred, true_class_index, num_seen):
-    """Calculate max margin loss of predicted embeddings
+    """Calculate max margin loss of predicted attributes
 
     Parameters
     ----------
-    y_true: GloVe embedding matrix, shape=(b, 1, 1, 1, num_seen, 300)
-    y_pred: yolo output embeddings, shape=(b, h, w, anchors, 300)
-    true_class_index: class index of ground truth embedding, shape=(b, h, w, anchors, num_seen)
+    y_true: attribute matrix, shape=(b, 1, 1, 1, num_seen, 64)
+    y_pred: yolo output attributes, shape=(b, h, w, anchors, 64)
+    true_class_index: class index of ground truth attribute, shape=(b, h, w, anchors, num_seen)
     num_seen: number of seen classes
     """
     y_pred = K.expand_dims(y_pred, -2)
@@ -353,14 +353,14 @@ def hinge_loss(y_true, y_pred, true_class_index, num_seen):
     return loss
 
 
-def category_loss(y_true, y_pred, true_class_index):
-    """Calculate loss of predicted embeddings in embarrassing algorithm
+def cross_entropy_loss(y_true, y_pred, true_class_index):
+    """Calculate loss of predicted attributes in embarrassing algorithm
 
     Parameters
     ----------
-    y_true: GloVe embedding matrix, shape=(b, 1, 1, 1, num_seen, 300)
-    y_pred: yolo output embeddings, shape=(b, h, w, anchors, 300)
-    true_class_index: class index of ground truth embedding, shape=(b, h, w, anchors, num_seen)
+    y_true: attribute matrix, shape=(b, 1, 1, 1, num_seen, 64)
+    y_pred: yolo output attributes, shape=(b, h, w, anchors, 64)
+    true_class_index: class index of ground truth attribute, shape=(b, h, w, anchors, num_seen)
     """
     y_pred = K.expand_dims(y_pred, -2)
     pred_class = K.softmax(cosine_similarity(y_true, y_pred), -1)
@@ -369,25 +369,12 @@ def category_loss(y_true, y_pred, true_class_index):
     return loss
 
 
-def kl_divergence(y_true, y_pred):
-    """
-    Parameters
-    ----------
-    y_true: class relation, shape=(b, h, w, anchors, 20)
-    y_pred: yolo output relation, shape=(b, h, w, anchors, 20)
-    """
-    eps = 1e-4
-    loss = y_pred * K.log((y_pred + eps) / (y_true + eps)) + \
-           (1 - y_pred) * K.log((1 - y_pred + eps) / (1 - y_true + eps))
-    return loss
-
-
 def class_relation(true_class_index, attribute):
     """
     Parameters
     ----------
-    true_class_index: class index of ground truth embedding, shape=(b, h, w, anchors, num_seen)
-    attribute: GloVe embedding matrix, shape=(b, 1, 1, 1, num_seen, 300)
+    true_class_index: class index of ground truth attribute, shape=(b, h, w, anchors, num_seen)
+    attribute: attribute matrix, shape=(b, 1, 1, 1, num_seen, 64)
     """
     true_class_index = K.expand_dims(true_class_index, -1)
     true_class_attribute = K.max(true_class_index * attribute, axis=-2, keepdims=True)
@@ -400,7 +387,7 @@ def yolo_loss(args, anchors, num_seen, ignore_thresh=.5):
 
     Parameters
     ----------
-    args: [*yolo_outputs, *y_true, y_embedding]
+    args: [*yolo_outputs, *y_true, y_attribute]
     # yolo_outputs: list of tensor, the output of yolo_body
     # y_true: list of array, the output of preprocess_true_boxes
     anchors: array, shape=(N, 2), wh
@@ -465,7 +452,7 @@ def yolo_loss(args, anchors, num_seen, ignore_thresh=.5):
         object_loss = object_mask * K.binary_crossentropy(object_mask * true_relation, raw_pred_objectness, True) + \
                       (1 - object_mask) * \
                       K.binary_crossentropy(object_mask * true_relation, raw_pred_objectness, True) * ignore_mask
-        attribute_loss = object_mask * category_loss(attributes, raw_pred_box_attribute, true_class_probs)
+        attribute_loss = object_mask * hinge_loss(attributes, raw_pred_box_attribute, true_class_probs, num_seen)
 
         xy_loss = K.sum(xy_loss) / mf
         wh_loss = K.sum(wh_loss) / mf

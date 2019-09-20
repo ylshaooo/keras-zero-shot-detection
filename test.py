@@ -13,17 +13,14 @@ from tqdm import tqdm
 from yolo3.model import yolo_body, yolo_eval
 from yolo3.utils import letterbox_image
 
-seen_classes = ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'cat', 'chair', 'cow', 'diningtable',
-                'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'tvmonitor']
-
-unseen_classes = ['car', 'dog', 'sofa', 'train']
-
-total_classes = seen_classes + unseen_classes
+with open('model_data/voc_classes.txt') as f:
+    class_names = f.readlines()
+class_names = [c.strip() for c in class_names]
 
 
 class YOLO(object):
     def __init__(self):
-        self.weight_path = 'logs/voc_04/trained_weights_sigmoid.h5'
+        self.weight_path = 'logs/voc/trained_weights.h5'
         self.anchors_path = 'model_data/yolo_anchors.txt'
         self.attribute_path = 'model_data/attributes.npy'
         self.predict_dir = 'data/predicted/'
@@ -88,7 +85,7 @@ class YOLO(object):
         image_name = image_path.split('/')[-1].split('.')[0]
         with open(os.path.join(self.predict_dir, image_name + '.txt'), 'w') as f:
             for i, c in enumerate(out_classes):
-                class_name = unseen_classes[c]
+                class_name = class_names[self.num_seen:][c]
                 confidence = out_scores[i]
                 box = out_boxes[i]
 
@@ -118,5 +115,5 @@ def _main():
 
 
 if __name__ == '__main__':
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '1'
     _main()

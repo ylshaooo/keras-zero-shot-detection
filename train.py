@@ -67,7 +67,7 @@ def _main():
     input_shape = (416, 416)  # multiple of 32, hw
     attribute_shape = (num_seen, 64)
 
-    val_split = 0.1
+    val_split = 0.08
     with open(annotation_path) as f:
         lines = f.readlines()
     np.random.seed(10101)
@@ -83,7 +83,7 @@ def _main():
     logging = TensorBoard(log_dir=log_dir)
     checkpoint = ModelCheckpoint(log_dir + 'ep{epoch:03d}-loss{loss:.3f}-val_loss{val_loss:.3f}.h5',
                                  monitor='val_loss', save_weights_only=True, save_best_only=True, period=3)
-    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=3, verbose=1)
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=3, verbose=1)
     early_stopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=1)
 
     batch_size = 16
@@ -104,7 +104,7 @@ def _main():
     print('Unfreeze all of the layers.')
 
     batch_size = 8
-    model.compile(optimizer=Adam(lr=1e-4), loss={'yolo_loss': lambda y_true, y_pred: y_pred})
+    model.compile(optimizer=Adam(lr=2e-4), loss={'yolo_loss': lambda y_true, y_pred: y_pred})
     print('Train on {} samples, val on {} samples, with batch size {}.'.format(num_train, num_val, batch_size))
     model.fit_generator(DataGenerator(lines[:num_train], attribute, anchors, input_shape, batch_size),
                         validation_data=DataGenerator(lines[num_train:], attribute, anchors, input_shape, batch_size),
@@ -116,7 +116,7 @@ def _main():
                         use_multiprocessing=True,
                         callbacks=[logging, checkpoint, reduce_lr, early_stopping])
     print('Finish training and save weights.')
-    model.save_weights(log_dir + 'trained_weights_sigmoid.h5')
+    model.save_weights(log_dir + 'trained_weights.h5')
     K.clear_session()
 
 
@@ -139,7 +139,7 @@ def get_anchors(anchors_path):
 def create_model(input_shape, attribute_shape, anchors, num_seen,
                  load_pretrained=True, weights_path='model_data/yolo_weights.h5'):
     """create the training model"""
-    K.clear_session()  # get a new session
+    K.clear_session()
     image_input = Input(shape=(None, None, 3))
     h, w = input_shape
     num_anchors = len(anchors)
@@ -154,7 +154,7 @@ def create_model(input_shape, attribute_shape, anchors, num_seen,
     if load_pretrained:
         model_body.load_weights(weights_path, by_name=True, skip_mismatch=True)
         print('Load weights {}.'.format(weights_path))
-        num = len(model_body.layers) - 3
+        num = 185
         for i in range(num):
             model_body.layers[i].trainable = False
         print('Freeze the first {} layers of total {} layers.'.format(num, len(model_body.layers)))
